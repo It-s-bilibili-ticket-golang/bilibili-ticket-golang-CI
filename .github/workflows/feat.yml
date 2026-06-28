@@ -7,7 +7,7 @@ on:
         description: "分发目标"
         required: true
         type: choice
-        default: "both"
+        default: "telegram-only"
         options:
           - "release-only"
           - "telegram-only"
@@ -374,7 +374,7 @@ jobs:
 
           COMMIT_MSG=$(git log -1 --pretty=%B | head -1 | sed 's/[_*[\]()~`>#+\-=|{}.!]/\\\\&/g')
 
-          MSG_HEAD="🚀 *New Cross-Repo Build*"
+          MSG_HEAD="🚀 *New Build* #alpha"
           REPO_LINE="📦 *Repo:* \`${REPO}\`"
           BRANCH_LINE="🌿 *Ref:* \`${{ inputs.source_ref || 'default' }}\`"
           TAG_LINE="🔖 *Tag:* \`${COMMIT}\`"
