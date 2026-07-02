@@ -21,7 +21,7 @@ on:
         description: "源仓库分支/tag/commit (留空则用默认分支)"
         required: false
         type: string
-        default: "feat/employer-worker-cluster"
+        default: "main"
 
 permissions:
   contents: write
