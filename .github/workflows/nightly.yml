@@ -43,9 +43,9 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ inputs.tag }}
-          REPORT_DSN: ${{ secrets.ReportDSN }}
-          REPORT_SALT: ${{ secrets.ReportSalt }}
-          GARBLE_SEED: ${{ secrets.GarbleSeed }}
+          REPORT_DSN: ${{ secrets.REPORT_DSN }}
+          REPORT_SALT: ${{ secrets.REPORT_SALT }}
+          GARBLE_SEED: ${{ secrets.GARBLE_SEED }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::tag must use the x.y.z format (for example: 1.2.3)"
