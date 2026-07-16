@@ -251,18 +251,14 @@ jobs:
           COMMIT="${{ steps.set_commit.outputs.short }}"
           BUILD_TIME="${{ steps.vars.outputs.build_time }}"
           EXTRA_TAGS="desktop"
-          EXTRA_LDFLAGS=""
+          EXTRA_LDFLAGS="-X bilibili-ticket-golang/lib/global.GitCommit=${COMMIT}"
 
           case "${{ matrix.platform }}" in
-            windows)
-              EXTRA_LDFLAGS="-H windowsgui"
-              ;;
             linux)
               EXTRA_TAGS="$EXTRA_TAGS,webkit2_41"
               ;;
           esac
 
-          EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X bilibili-ticket-golang/lib/global.GitCommit=${COMMIT}"
           EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X bilibili-ticket-golang/lib/global.BuildTime=${BUILD_TIME}"
           EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X 'bilibili-ticket-golang/lib/global.Version=${VERSION}'"
           EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportDSN=${REPORT_DSN}'"
