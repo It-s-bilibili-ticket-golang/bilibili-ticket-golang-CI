@@ -85,6 +85,8 @@ jobs:
 
   build:
     needs: validate
+    env:
+      GOGARBLE: "bilibili-ticket-golang/*"
     strategy:
       fail-fast: true
       matrix:
@@ -153,6 +155,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache: false
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -160,6 +163,47 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: cmd/gui/frontend/package-lock.json
+
+      - name: Resolve Go cache paths
+        id: go-cache-paths
+        shell: bash
+        run: |
+          echo "gomod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "gobuild=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "garble=${RUNNER_TEMP}/garble-cache" >> "$GITHUB_OUTPUT"
+          echo "GARBLE_CACHE=${RUNNER_TEMP}/garble-cache" >> "$GITHUB_ENV"
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.go-cache-paths.outputs.gomod }}
+          key: go-mod-v1-${{ runner.os }}-go1.26-${{ hashFiles('go.work.sum', '**/go.sum') }}
+          restore-keys: |
+            go-mod-v1-${{ runner.os }}-go1.26-
+
+      - name: Cache Go and Garble build outputs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ steps.go-cache-paths.outputs.gobuild }}
+            ${{ steps.go-cache-paths.outputs.garble }}
+          key: go-garble-v2-${{ runner.os }}-${{ matrix.arch }}-go1.26-${{ hashFiles('go.work.sum', '**/go.sum') }}-${{ steps.set_commit.outputs.short }}
+          restore-keys: |
+            go-garble-v2-${{ runner.os }}-${{ matrix.arch }}-go1.26-${{ hashFiles('go.work.sum', '**/go.sum') }}-
+            go-garble-v2-${{ runner.os }}-${{ matrix.arch }}-go1.26-
+
+      - name: Cache Wails frontend build
+        uses: actions/cache@v4
+        with:
+          path: |
+            cmd/gui/frontend/node_modules
+            cmd/gui/frontend/dist
+            cmd/gui/frontend/bindings
+            cmd/gui/.task
+          key: wails-frontend-v1-${{ runner.os }}-${{ matrix.arch }}-node24-${{ hashFiles('cmd/gui/frontend/package-lock.json') }}-${{ steps.set_commit.outputs.short }}
+          restore-keys: |
+            wails-frontend-v1-${{ runner.os }}-${{ matrix.arch }}-node24-${{ hashFiles('cmd/gui/frontend/package-lock.json') }}-
+            wails-frontend-v1-${{ runner.os }}-${{ matrix.arch }}-node24-
 
       # ── Linux: install Wails3 GUI build dependencies ──
       - name: Install Linux build dependencies
