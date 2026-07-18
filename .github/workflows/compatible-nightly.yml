@@ -33,7 +33,18 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    outputs:
+      build_time: ${{ steps.vars.outputs.build_time }}
     steps:
+      - name: Capture workflow start time
+        id: vars
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          STARTED_AT="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.run_started_at')"
+          echo "build_time=$(date -u -d "$STARTED_AT" +%Y%m%dT%H%M%S)" >> "$GITHUB_OUTPUT"
+
       - name: Validate cloud-control release secrets
         shell: bash
         env:
@@ -101,12 +112,6 @@ jobs:
             cgo: 1
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Set build time
-        id: vars
-        shell: bash
-        run: |
-          echo "build_time=$(date -u +%Y%m%dT%H%M%S)" >> "$GITHUB_OUTPUT"
-
       # ── Cross-repo checkout ──
       - name: Checkout source repo
         uses: actions/checkout@v4
@@ -225,7 +230,7 @@ jobs:
           REPORT_PUBLIC_KEY: ${{ secrets.REPORT_PUBLIC_KEY }}
         run: |
           VERSION="${{ inputs.build_version }}"
-          BUILD_TIME="${{ steps.vars.outputs.build_time }}"
+          BUILD_TIME="${{ needs.validate.outputs.build_time }}"
           APP_NAME="bilibili-ticket-golang"
           OUTPUT="build/bin/${APP_NAME}${{ matrix.ext }}"
 
