@@ -192,9 +192,15 @@ jobs:
           find "$PATCH_DIR" -type f \( -name '*.patch' -o -name '*.diff' \) -print |
             LC_ALL=C sort |
             while IFS= read -r PATCH_FILE; do
-              echo "Applying $PATCH_FILE"
-              git apply --check "$PATCH_FILE"
-              git apply "$PATCH_FILE"
+              PATCH_NAME="$(basename "$PATCH_FILE")"
+              if ! git apply --check "$PATCH_FILE" >/dev/null 2>&1; then
+                echo "::error::Patch validation failed: $PATCH_NAME"
+                exit 1
+              fi
+              if ! git apply "$PATCH_FILE" >/dev/null 2>&1; then
+                echo "::error::Patch application failed: $PATCH_NAME"
+                exit 1
+              fi
             done
 
       - name: Resolve short commit
@@ -225,6 +231,11 @@ jobs:
         run: |
           test -f .private/cloudcontrol/client/go.mod
           go work use ./.private/cloudcontrol/client
+
+      - name: Test private cloud-control client
+        shell: bash
+        working-directory: .private/cloudcontrol/client
+        run: go test -count=1 ./...
 
       - name: Set up Node
         uses: actions/setup-node@v4
