@@ -22,7 +22,7 @@ on:
         type: string
         default: "main"
       apply_patches:
-        description: "Apply private client patches (output version will end with -patched)"
+        description: "Apply unsafe private client patches; safe patches are always applied (output version will end with -patched)"
         required: false
         type: boolean
         default: false
@@ -139,31 +139,38 @@ jobs:
           fetch-depth: 1
 
       - name: Apply private client patches
-        if: inputs.apply_patches
         shell: bash
         run: |
-          PATCH_DIR=".private/cloudcontrol/client/patch"
-          if [ ! -d "$PATCH_DIR" ]; then
-            echo "::error::Patch directory not found: $PATCH_DIR"
-            exit 1
+          apply_patch_dir() {
+            PATCH_DIR="$1"
+            PATCH_KIND="$2"
+            if [ ! -d "$PATCH_DIR" ]; then
+              echo "::error::$PATCH_KIND patch directory not found: $PATCH_DIR"
+              exit 1
+            fi
+            if ! find "$PATCH_DIR" -type f \( -name '*.patch' -o -name '*.diff' \) -print -quit | grep -q .; then
+              echo "::error::No .patch or .diff files found in $PATCH_KIND patch directory: $PATCH_DIR"
+              exit 1
+            fi
+            find "$PATCH_DIR" -type f \( -name '*.patch' -o -name '*.diff' \) -print |
+              LC_ALL=C sort |
+              while IFS= read -r PATCH_FILE; do
+                PATCH_NAME="$(basename "$PATCH_FILE")"
+                if ! git apply --check "$PATCH_FILE" >/dev/null 2>&1; then
+                  echo "::error::$PATCH_KIND patch validation failed: $PATCH_NAME"
+                  exit 1
+                fi
+                if ! git apply "$PATCH_FILE" >/dev/null 2>&1; then
+                  echo "::error::$PATCH_KIND patch application failed: $PATCH_NAME"
+                  exit 1
+                fi
+              done
+          }
+
+          apply_patch_dir ".private/cloudcontrol/client/patch/safe" "Safe"
+          if [ "${{ inputs.apply_patches }}" = "true" ]; then
+            apply_patch_dir ".private/cloudcontrol/client/patch/unsafe" "Unsafe"
           fi
-          if ! find "$PATCH_DIR" -type f \( -name '*.patch' -o -name '*.diff' \) -print -quit | grep -q .; then
-            echo "::error::No .patch or .diff files found in $PATCH_DIR"
-            exit 1
-          fi
-          find "$PATCH_DIR" -type f \( -name '*.patch' -o -name '*.diff' \) -print |
-            LC_ALL=C sort |
-            while IFS= read -r PATCH_FILE; do
-              PATCH_NAME="$(basename "$PATCH_FILE")"
-              if ! git apply --check "$PATCH_FILE" >/dev/null 2>&1; then
-                echo "::error::Patch validation failed: $PATCH_NAME"
-                exit 1
-              fi
-              if ! git apply "$PATCH_FILE" >/dev/null 2>&1; then
-                echo "::error::Patch application failed: $PATCH_NAME"
-                exit 1
-              fi
-            done
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -216,14 +223,14 @@ jobs:
         run: |
           mkdir -p data
           echo "1" > data/.verified
-          
+
       # ── Generate Wails bindings ──
       - name: Generate Wails bindings
         shell: bash
         working-directory: cmd/gui
         run: |
           wails3 generate bindings
-          
+
       # ── Build frontend ──
       - name: Build frontend
         shell: bash
