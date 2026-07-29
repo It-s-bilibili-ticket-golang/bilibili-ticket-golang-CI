@@ -61,6 +61,7 @@ jobs:
           REPORT_PUBLIC_KEY: ${{ secrets.REPORT_PUBLIC_KEY }}
           GARBLE_SEED: ${{ secrets.GARBLE_SEED }}
           CHECKOUT_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+          RELEASE_SECRET: ${{ secrets.RELEASE_SECRET }}
         run: |
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::tag must use the x.y.z format (for example: 1.2.3)"
@@ -84,6 +85,11 @@ jobs:
 
           if [ -z "$CHECKOUT_TOKEN" ]; then
             echo "::error::GitHub secret CHECKOUT_TOKEN is required for the private cloud-control repository"
+            exit 1
+          fi
+
+          if [ -z "$RELEASE_SECRET" ]; then
+            echo "::error::GitHub secret RELEASE_SECRET is required"
             exit 1
           fi
 
@@ -334,6 +340,7 @@ jobs:
           REPORT_DSN: ${{ secrets.REPORT_DSN }}
           REPORT_PUBLIC_KEY: ${{ secrets.REPORT_PUBLIC_KEY }}
           GARBLE_SEED: ${{ secrets.GARBLE_SEED }}
+          RELEASE_SECRET: ${{ secrets.RELEASE_SECRET }}
         run: |
           COMMIT="${{ steps.set_commit.outputs.short }}"
           BUILD_TIME="${{ needs.validate.outputs.build_time }}"
@@ -350,6 +357,7 @@ jobs:
           EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X 'bilibili-ticket-golang/lib/global.Version=${VERSION}'"
           EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportDSN=${REPORT_DSN}'"
           EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportPublicKey=${REPORT_PUBLIC_KEY}'"
+          EXTRA_LDFLAGS="$EXTRA_LDFLAGS -X 'main.watermarkSigningKey=${RELEASE_SECRET}'"
 
           echo "::group::Build info"
           echo "  Platform: ${{ matrix.platform }} (${{ matrix.arch }})"
@@ -379,6 +387,7 @@ jobs:
           REPORT_DSN: ${{ secrets.REPORT_DSN }}
           REPORT_PUBLIC_KEY: ${{ secrets.REPORT_PUBLIC_KEY }}
           GARBLE_SEED: ${{ secrets.GARBLE_SEED }}
+          RELEASE_SECRET: ${{ secrets.RELEASE_SECRET }}
         run: |
           COMMIT="${{ steps.set_commit.outputs.short }}"
           BUILD_TIME="${{ needs.validate.outputs.build_time }}"
@@ -388,6 +397,7 @@ jobs:
           LDFLAGS="$LDFLAGS -X 'bilibili-ticket-golang/lib/global.Version=${VERSION}'"
           LDFLAGS="$LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportDSN=${REPORT_DSN}'"
           LDFLAGS="$LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportPublicKey=${REPORT_PUBLIC_KEY}'"
+          LDFLAGS="$LDFLAGS -X 'main.watermarkSigningKey=${RELEASE_SECRET}'"
           garble -literals -tiny -seed="$GARBLE_SEED" build \
             -tags "production,cloudcontrol" -trimpath -buildvcs=false \
             -ldflags "$LDFLAGS" \

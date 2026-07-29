@@ -59,10 +59,12 @@ jobs:
           REPORT_DSN: ${{ secrets.REPORT_DSN }}
           REPORT_PUBLIC_KEY: ${{ secrets.REPORT_PUBLIC_KEY }}
           CHECKOUT_TOKEN: ${{ secrets.CHECKOUT_TOKEN }}
+          RELEASE_SECRET: ${{ secrets.RELEASE_SECRET }}
         run: |
           : "${REPORT_DSN:?REPORT_DSN secret is required}"
           : "${REPORT_PUBLIC_KEY:?REPORT_PUBLIC_KEY secret is required}"
           : "${CHECKOUT_TOKEN:?CHECKOUT_TOKEN secret is required for the private cloud-control repository}"
+          : "${RELEASE_SECRET:?RELEASE_SECRET secret is required}"
           python3 - <<'PY'
           import base64, os, sys
           value = os.environ["REPORT_PUBLIC_KEY"]
@@ -275,6 +277,7 @@ jobs:
           CGO_ENABLED: ${{ matrix.cgo }}
           REPORT_DSN: ${{ secrets.REPORT_DSN }}
           REPORT_PUBLIC_KEY: ${{ secrets.REPORT_PUBLIC_KEY }}
+          RELEASE_SECRET: ${{ secrets.RELEASE_SECRET }}
         run: |
           VERSION="$BUILD_VERSION"
           BUILD_TIME="${{ needs.validate.outputs.build_time }}"
@@ -297,6 +300,7 @@ jobs:
           LDFLAGS="$LDFLAGS -X bilibili-ticket-golang/lib/global.BuildTime=${BUILD_TIME}"
           LDFLAGS="$LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportDSN=${REPORT_DSN}'"
           LDFLAGS="$LDFLAGS -X 'bilibili-ticket-golang/lib/global.ReportPublicKey=${REPORT_PUBLIC_KEY}'"
+          LDFLAGS="$LDFLAGS -X 'main.watermarkSigningKey=${RELEASE_SECRET}'"
 
           echo "::group::Build info"
           echo "  Version:  ${VERSION}"
