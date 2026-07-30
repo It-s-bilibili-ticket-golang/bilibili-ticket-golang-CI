@@ -166,7 +166,7 @@ jobs:
     steps:
       # ── Cross-repo checkout ──
       - name: Checkout source repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: It-s-bilibili-ticket-golang/bilibili-ticket-golang-private
           ref: ${{ inputs.source_ref || '' }}
@@ -174,7 +174,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout private cloud-control client
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: It-s-bilibili-ticket-golang/bilibili-ticket-golang-telemetry
           ref: main
@@ -234,7 +234,7 @@ jobs:
           ! grep -R "NewNoopReportClient" --include='*.go' cmd
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26"
           cache: false
@@ -245,13 +245,8 @@ jobs:
           test -f .private/cloudcontrol/client/go.mod
           go work use ./.private/cloudcontrol/client
 
-      - name: Test private cloud-control client
-        shell: bash
-        working-directory: .private/cloudcontrol/client
-        run: go test -count=1 ./...
-
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -267,7 +262,7 @@ jobs:
           echo "GARBLE_CACHE=${RUNNER_TEMP}/garble-cache" >> "$GITHUB_ENV"
 
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.go-cache-paths.outputs.gomod }}
           key: go-mod-v1-${{ runner.os }}-go1.26-${{ hashFiles('go.work.sum', '**/go.sum') }}
@@ -275,7 +270,7 @@ jobs:
             go-mod-v1-${{ runner.os }}-go1.26-
 
       - name: Cache Go and Garble build outputs
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ${{ steps.go-cache-paths.outputs.gobuild }}
@@ -286,7 +281,7 @@ jobs:
             go-garble-v2-${{ runner.os }}-${{ matrix.arch }}-go1.26-
 
       - name: Cache Wails frontend build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             cmd/gui/frontend/node_modules
@@ -297,6 +292,11 @@ jobs:
           restore-keys: |
             wails-frontend-v1-${{ runner.os }}-${{ matrix.arch }}-node24-${{ hashFiles('cmd/gui/frontend/package-lock.json') }}-
             wails-frontend-v1-${{ runner.os }}-${{ matrix.arch }}-node24-
+
+      - name: Test private cloud-control client
+        shell: bash
+        working-directory: .private/cloudcontrol/client
+        run: go test -count=1 ./...
 
       # ── Linux: install Wails3 GUI build dependencies ──
       - name: Install Linux build dependencies
@@ -427,7 +427,7 @@ jobs:
           rm -f "release/${WORKER_NAME}${{ matrix.ext }}"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cross-build-${{ matrix.platform }}-${{ matrix.arch }}${{ inputs.apply_patches && '-patched' || '' }}
           path: release/*.tar.gz
@@ -438,7 +438,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: It-s-bilibili-ticket-golang/bilibili-ticket-golang-private
           ref: ${{ inputs.source_ref || '' }}
@@ -446,7 +446,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: release-assets
 
