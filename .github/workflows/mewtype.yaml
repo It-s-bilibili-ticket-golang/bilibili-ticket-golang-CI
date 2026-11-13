@@ -231,6 +231,39 @@ jobs:
       #    python tooling/package-release.py \
       #      "$RUNNER_TEMP/mewtype-reference" --edition public
 
+      - name: Enable AES assembly for Lyra on Linux ARM64
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          llvm_bin="${LYRA_LLVM_BIN:-/usr/lib/llvm-22/bin}"
+          wrapper_bin="$(mktemp -d "$RUNNER_TEMP/lyra-llvm.XXXXXX")"
+          ln -s "$llvm_bin/llc" "$wrapper_bin/llc"
+          ln -s "$llvm_bin/llvm-ar" "$wrapper_bin/llvm-ar"
+
+          cat > "$wrapper_bin/clang" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          for arg in "$@"; do
+            if [[ "$arg" == *.s ]]; then
+              exec "$LYRA_REAL_CLANG" -march=armv8-a+aes "$@"
+            fi
+          done
+          exec "$LYRA_REAL_CLANG" "$@"
+          BASH
+          chmod +x "$wrapper_bin/clang"
+
+          export LYRA_REAL_CLANG="$llvm_bin/clang"
+          printf '.text\n aesimc v0.16b, v0.16b\n' > "$wrapper_bin/check.s"
+          "$wrapper_bin/clang" --target=aarch64-unknown-linux-gnu \
+            -c "$wrapper_bin/check.s" -o "$wrapper_bin/check.o"
+
+          {
+            echo "LYRA_REAL_CLANG=$LYRA_REAL_CLANG"
+            echo "LYRA_LLVM_BIN=$wrapper_bin"
+          } >> "$GITHUB_ENV"
+          
       - name: Build and archive obfuscated binaries
         working-directory: source
         env:
