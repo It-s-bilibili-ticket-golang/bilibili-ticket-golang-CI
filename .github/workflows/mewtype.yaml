@@ -143,7 +143,8 @@ jobs:
           node-version: "24"
 
       - name: Set up Rust and LLVM 22
-        if: ${{ matrix.target != 'aarch64-unknown-linux-gnu' && matrix.target != 'x86_64-apple-darwin' }}        working-directory: lyra
+        if: ${{ matrix.target != 'aarch64-unknown-linux-gnu' && matrix.target != 'x86_64-apple-darwin' }}        
+        working-directory: lyra
         env:
           LYRA_CI_EXPECTED_TARGET: ${{ matrix.target }}
         run: |
