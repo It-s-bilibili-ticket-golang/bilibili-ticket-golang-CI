@@ -215,21 +215,21 @@ jobs:
           set -euo pipefail
           cargo build --locked --release --bins
 
-      - name: Run the existing release packager
-        working-directory: source
-        env:
-          TELEMETRY_DSN: ${{ secrets.TELEMETRY_DSN }}
-          TELEMETRY_PINNED_SPKI_SHA256: ${{ secrets.TELEMETRY_PINNED_SPKI_SHA256 }}
-          TELEMETRY_ENROLLMENT_KEY: ${{ secrets.TELEMETRY_ENROLLMENT_KEY }}
-        run: |
-          set -euo pipefail
-          : "${TELEMETRY_DSN:?Missing TELEMETRY_DSN}"
-          : "${TELEMETRY_PINNED_SPKI_SHA256:?Missing TELEMETRY_PINNED_SPKI_SHA256}"
-          : "${TELEMETRY_ENROLLMENT_KEY:?Missing TELEMETRY_ENROLLMENT_KEY}"
-
-          unset BILIBILI_RELEASE_EPOCH
-          python tooling/package-release.py \
-            "$RUNNER_TEMP/mewtype-reference" --edition public
+      #- name: Run the existing release packager
+      #  working-directory: source
+      #  env:
+      #    TELEMETRY_DSN: ${{ secrets.TELEMETRY_DSN }}
+      #    TELEMETRY_PINNED_SPKI_SHA256: ${{ secrets.TELEMETRY_PINNED_SPKI_SHA256 }}
+      #    TELEMETRY_ENROLLMENT_KEY: ${{ secrets.TELEMETRY_ENROLLMENT_KEY }}
+      #  run: |
+      #    set -euo pipefail
+      #    : "${TELEMETRY_DSN:?Missing TELEMETRY_DSN}"
+      #    : "${TELEMETRY_PINNED_SPKI_SHA256:?Missing TELEMETRY_PINNED_SPKI_SHA256}"
+      #    : "${TELEMETRY_ENROLLMENT_KEY:?Missing TELEMETRY_ENROLLMENT_KEY}"
+#
+      #    unset BILIBILI_RELEASE_EPOCH
+      #    python tooling/package-release.py \
+      #      "$RUNNER_TEMP/mewtype-reference" --edition public
 
       - name: Build and archive obfuscated binaries
         working-directory: source
