@@ -4,23 +4,41 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
+        description: Source branch, tag, or commit
         type: string
         required: true
         default: main
+      tag:
+        description: Release version. Leave blank to use nightly+<short SHA>.
+        type: string
+        required: false
       expires_in_one_week:
+        description: Expire seven days after this workflow starts
         type: boolean
         default: false
+      upload_target:
+        description: Distribution target
+        type: choice
+        required: true
+        default: telegram-only
+        options:
+          - release-only
+          - telegram-only
+          - both
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   resolve:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
-      revision: ${{ steps.source.outputs.revision }}
-      release_epoch: ${{ steps.source.outputs.release_epoch }}
+      revision: ${{ steps.metadata.outputs.revision }}
+      version: ${{ steps.metadata.outputs.version }}
+      release_epoch: ${{ steps.metadata.outputs.release_epoch }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -29,23 +47,38 @@ jobs:
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           persist-credentials: false
 
-      - id: source
-        name: 固定源码提交和统一发版时间
+      - name: Resolve source and release metadata
+        id: metadata
         shell: bash
         env:
+          INPUT_TAG: ${{ inputs.tag }}
           EXPIRES_IN_ONE_WEEK: ${{ inputs.expires_in_one_week }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+          revision="$(git rev-parse HEAD)"
+          version="${INPUT_TAG:-nightly+${revision:0:7}}"
+          if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] ||
+             ! git check-ref-format "refs/tags/$version"; then
+            echo "::error::Invalid release tag"
+            exit 1
+          fi
+
+          release_epoch=""
           if [[ "$EXPIRES_IN_ONE_WEEK" == "true" ]]; then
             started_at="$(gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/1" \
               --jq '.run_started_at')"
             [[ -n "$started_at" && "$started_at" != "null" ]]
-            echo "release_epoch=$(date -u -d "$started_at" +%s)" >> "$GITHUB_OUTPUT"
+            release_epoch="$(date -u -d "$started_at" +%s)"
           fi
+
+          {
+            echo "revision=$revision"
+            echo "version=$version"
+            echo "release_epoch=$release_epoch"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: resolve
@@ -53,11 +86,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, platform: linux-amd64 }
-          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
-          - { runner: windows-latest, platform: windows-amd64 }
-          - { runner: macos-15-intel, platform: macos-amd64 }
-          - { runner: macos-15, platform: macos-arm64 }
+          - { runner: ubuntu-latest, platform: linux-amd64, ext: "" }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64, ext: "" }
+          - { runner: windows-latest, platform: windows-amd64, ext: ".exe" }
+          - { runner: macos-15-intel, platform: macos-amd64, ext: "" }
+          - { runner: macos-15, platform: macos-arm64, ext: "" }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -69,56 +102,138 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: "3.13"
 
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          node-version: "24"
 
-      - name: 安装 Rust
+      - name: Install Rust
         shell: bash
         run: |
           rustup toolchain install 1.98.1 --profile minimal
           rustup override set 1.98.1
 
-      - name: 验证并打包
+      - name: Build and package
         shell: bash
         env:
-          EXPIRES_IN_ONE_WEEK: ${{ inputs.expires_in_one_week }}
-          RELEASE_EPOCH: ${{ needs.resolve.outputs.release_epoch }}
-          PYTHONDONTWRITEBYTECODE: '1'
           PLATFORM: ${{ matrix.platform }}
-          REVISION: ${{ needs.resolve.outputs.revision }}
+          EXE_EXT: ${{ matrix.ext }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          RELEASE_EPOCH: ${{ needs.resolve.outputs.release_epoch }}
+          EXPIRES_IN_ONE_WEEK: ${{ inputs.expires_in_one_week }}
+          TELEMETRY_DSN: ${{ secrets.TELEMETRY_DSN }}
+          TELEMETRY_PINNED_SPKI_SHA256: ${{ secrets.TELEMETRY_PINNED_SPKI_SHA256 }}
+          TELEMETRY_ENROLLMENT_KEY: ${{ secrets.TELEMETRY_ENROLLMENT_KEY }}
+          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
-          unset BILIBILI_RELEASE_EPOCH
 
+          : "${TELEMETRY_DSN:?Missing TELEMETRY_DSN}"
+          : "${TELEMETRY_PINNED_SPKI_SHA256:?Missing TELEMETRY_PINNED_SPKI_SHA256}"
+          : "${TELEMETRY_ENROLLMENT_KEY:?Missing TELEMETRY_ENROLLMENT_KEY}"
+
+          unset BILIBILI_RELEASE_EPOCH
           if [[ "$EXPIRES_IN_ONE_WEEK" == "true" ]]; then
             [[ "$RELEASE_EPOCH" =~ ^[0-9]+$ ]]
             export BILIBILI_RELEASE_EPOCH="$RELEASE_EPOCH"
           fi
 
-          name="mewtype-${PLATFORM}-${REVISION:0:12}"
+          name="mewtype-${PLATFORM}-${VERSION}"
           python tooling/package-release.py "dist/$name" --edition public
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
 
-          python - "dist/$name.tar.gz" <<'PY'
-          import hashlib
-          import sys
-          from pathlib import Path
-
-          archive = Path(sys.argv[1])
-          with archive.open("rb") as file:
-              digest = hashlib.file_digest(file, "sha256").hexdigest()
-          archive.with_suffix(".gz.sha256").write_bytes(
-              f"{digest}  {archive.name}\n".encode("ascii")
-          )
-          PY
+          mkdir -p dist/assets
+          tar -C dist -czf "dist/assets/$name.tar.gz" "$name"
+          cp "dist/$name/bin/controller$EXE_EXT" \
+            "dist/assets/mewtype-controller-${PLATFORM}-${VERSION}${EXE_EXT}"
+          cp "dist/$name/bin/worker$EXE_EXT" \
+            "dist/assets/mewtype-worker-${PLATFORM}-${VERSION}${EXE_EXT}"
 
       - uses: actions/upload-artifact@v5
         with:
           name: mewtype-${{ matrix.platform }}
-          path: |
-            dist/*.tar.gz
-            dist/*.sha256
+          path: dist/assets/*
           if-no-files-found: error
+
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: mewtype-publish-${{ needs.resolve.outputs.version }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      REVISION: ${{ needs.resolve.outputs.revision }}
+      RELEASE_EPOCH: ${{ needs.resolve.outputs.release_epoch }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: mewtype-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd release-assets
+            LC_ALL=C sha256sum -- mewtype-* > "checksums-${VERSION}.txt"
+          )
+
+          {
+            printf 'Source commit: https://github.com/It-s-bilibili-ticket-golang/bilibili-ticket-mewtype/commit/%s\n' "$REVISION"
+            if [[ -n "$RELEASE_EPOCH" ]]; then
+              printf '\nExpires at %s UTC.\n' \
+                "$(date -u -d "@$((RELEASE_EPOCH + 604800))" '+%Y-%m-%d %H:%M:%S')"
+            fi
+          } > release-notes.md
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.upload_target == 'release-only' || inputs.upload_target == 'both' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          flags=()
+          if [[ "$VERSION" == nightly+* ]]; then
+            flags+=(--prerelease)
+          fi
+
+          gh release create "$VERSION" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Mewtype $VERSION" \
+            --notes-file release-notes.md \
+            "${flags[@]}"
+
+      - name: Publish to Telegram
+        if: ${{ inputs.upload_target == 'telegram-only' || inputs.upload_target == 'both' }}
+        shell: bash
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+
+          : "${TELEGRAM_BOT_TOKEN:?Missing TELEGRAM_BOT_TOKEN}"
+          : "${TELEGRAM_CHAT_ID:?Missing TELEGRAM_CHAT_ID}"
+
+          api="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+          message="$(printf 'Mewtype %s\n\n' "$VERSION"; cat release-notes.md)"
+
+          curl --fail --silent --show-error --output /dev/null \
+            --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+            --data-urlencode "text=$message" \
+            "$api/sendMessage"
+
+          for asset in release-assets/*; do
+            curl --fail --silent --show-error --output /dev/null \
+              --form-string "chat_id=$TELEGRAM_CHAT_ID" \
+              --form "document=@$asset" \
+              "$api/sendDocument"
+          done
