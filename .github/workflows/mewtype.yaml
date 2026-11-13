@@ -1,4 +1,4 @@
-name: Build Mewtype
+name: Build and release Mewtype
 
 on:
   workflow_dispatch:
@@ -9,11 +9,11 @@ on:
         required: true
         default: main
       tag:
-        description: Release version. Leave blank to use nightly+<short SHA>.
+        description: Release tag. Leave empty for nightly+<short SHA>.
         type: string
         required: false
       expires_in_one_week:
-        description: Expire seven days after this workflow starts
+        description: Expire seven days after the workflow starts
         type: boolean
         default: false
       upload_target:
@@ -31,7 +31,7 @@ permissions:
 
 jobs:
   resolve:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       actions: read
@@ -47,7 +47,7 @@ jobs:
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           persist-credentials: false
 
-      - name: Resolve source and release metadata
+      - name: Resolve build metadata
         id: metadata
         shell: bash
         env:
@@ -82,41 +82,100 @@ jobs:
 
   build:
     needs: resolve
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     strategy:
       fail-fast: true
       matrix:
         include:
-          - { runner: ubuntu-latest, platform: linux-amd64, ext: "" }
-          - { runner: ubuntu-24.04-arm, platform: linux-arm64, ext: "" }
-          - { runner: windows-latest, platform: windows-amd64, ext: ".exe" }
-          - { runner: macos-15-intel, platform: macos-amd64, ext: "" }
-          - { runner: macos-15, platform: macos-arm64, ext: "" }
-    runs-on: ${{ matrix.runner }}
+          - runner: ubuntu-24.04
+            platform: linux-amd64
+            target: x86_64-unknown-linux-gnu
+            ext: ""
+          - runner: ubuntu-24.04-arm
+            platform: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            ext: ""
+          - runner: windows-2022
+            platform: windows-amd64
+            target: x86_64-pc-windows-msvc
+            ext: ".exe"
+          - runner: macos-15-intel
+            platform: macos-amd64
+            target: x86_64-apple-darwin
+            ext: ""
+          - runner: macos-15
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            ext: ""
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTUP_TOOLCHAIN: "1.98.1"
+      CARGO_TERM_COLOR: always
+      PYTHONDONTWRITEBYTECODE: "1"
+
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out Mewtype
+        uses: actions/checkout@v5
         with:
           repository: It-s-bilibili-ticket-golang/bilibili-ticket-mewtype
           ref: ${{ needs.resolve.outputs.revision }}
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           persist-credentials: false
+          path: source
+
+      - name: Check out Lyra
+        uses: actions/checkout@v5
+        with:
+          repository: hakaioffsec/lyra
+          ref: ${{ vars.LYRA_REF || 'main' }}
+          persist-credentials: false
+          path: lyra
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: "3.12"
 
       - uses: actions/setup-node@v5
         with:
           node-version: "24"
 
-      - name: Install Rust
-        shell: bash
-        run: |
-          rustup toolchain install 1.98.1 --profile minimal
-          rustup override set 1.98.1
-
-      - name: Build and package
-        shell: bash
+      - name: Set up Rust and LLVM 22
+        working-directory: lyra
         env:
+          LYRA_CI_EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          python scripts/setup_ci.py
+
+      - name: Build Lyra
+        working-directory: lyra
+        run: |
+          set -euo pipefail
+          cargo build --locked --release --bins
+
+      - name: Run the existing release packager
+        working-directory: source
+        env:
+          TELEMETRY_DSN: ${{ secrets.TELEMETRY_DSN }}
+          TELEMETRY_PINNED_SPKI_SHA256: ${{ secrets.TELEMETRY_PINNED_SPKI_SHA256 }}
+          TELEMETRY_ENROLLMENT_KEY: ${{ secrets.TELEMETRY_ENROLLMENT_KEY }}
+        run: |
+          set -euo pipefail
+          : "${TELEMETRY_DSN:?Missing TELEMETRY_DSN}"
+          : "${TELEMETRY_PINNED_SPKI_SHA256:?Missing TELEMETRY_PINNED_SPKI_SHA256}"
+          : "${TELEMETRY_ENROLLMENT_KEY:?Missing TELEMETRY_ENROLLMENT_KEY}"
+
+          unset BILIBILI_RELEASE_EPOCH
+          python tooling/package-release.py \
+            "$RUNNER_TEMP/mewtype-reference" --edition public
+
+      - name: Build and archive obfuscated binaries
+        working-directory: source
+        env:
+          TARGET: ${{ matrix.target }}
           PLATFORM: ${{ matrix.platform }}
           EXE_EXT: ${{ matrix.ext }}
           VERSION: ${{ needs.resolve.outputs.version }}
@@ -125,13 +184,8 @@ jobs:
           TELEMETRY_DSN: ${{ secrets.TELEMETRY_DSN }}
           TELEMETRY_PINNED_SPKI_SHA256: ${{ secrets.TELEMETRY_PINNED_SPKI_SHA256 }}
           TELEMETRY_ENROLLMENT_KEY: ${{ secrets.TELEMETRY_ENROLLMENT_KEY }}
-          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           set -euo pipefail
-
-          : "${TELEMETRY_DSN:?Missing TELEMETRY_DSN}"
-          : "${TELEMETRY_PINNED_SPKI_SHA256:?Missing TELEMETRY_PINNED_SPKI_SHA256}"
-          : "${TELEMETRY_ENROLLMENT_KEY:?Missing TELEMETRY_ENROLLMENT_KEY}"
 
           unset BILIBILI_RELEASE_EPOCH
           if [[ "$EXPIRES_IN_ONE_WEEK" == "true" ]]; then
@@ -139,25 +193,27 @@ jobs:
             export BILIBILI_RELEASE_EPOCH="$RELEASE_EPOCH"
           fi
 
-          name="mewtype-${PLATFORM}-${VERSION}"
-          python tooling/package-release.py "dist/$name" --edition public
+          export LYRA_BIN="$PWD/../lyra/target/release/lyra$EXE_EXT"
 
-          mkdir -p dist/assets
-          tar -C dist -czf "dist/assets/$name.tar.gz" "$name"
-          cp "dist/$name/bin/controller$EXE_EXT" \
-            "dist/assets/mewtype-controller-${PLATFORM}-${VERSION}${EXE_EXT}"
-          cp "dist/$name/bin/worker$EXE_EXT" \
-            "dist/assets/mewtype-worker-${PLATFORM}-${VERSION}${EXE_EXT}"
+          mkdir -p ../dist/bin ../dist/assets
+          bash tooling/build-lyra.sh "$TARGET" controller \
+            "../dist/bin/controller$EXE_EXT"
+          bash tooling/build-lyra.sh "$TARGET" worker \
+            "../dist/bin/worker$EXE_EXT"
+
+          tar -C ../dist/bin \
+            -czf "../dist/assets/mewtype-${PLATFORM}-${VERSION}.tar.gz" \
+            "controller$EXE_EXT" "worker$EXE_EXT"
 
       - uses: actions/upload-artifact@v5
         with:
           name: mewtype-${{ matrix.platform }}
-          path: dist/assets/*
+          path: dist/assets/*.tar.gz
           if-no-files-found: error
 
   publish:
     needs: [resolve, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     concurrency:
@@ -167,6 +223,7 @@ jobs:
       VERSION: ${{ needs.resolve.outputs.version }}
       REVISION: ${{ needs.resolve.outputs.revision }}
       RELEASE_EPOCH: ${{ needs.resolve.outputs.release_epoch }}
+
     steps:
       - uses: actions/download-artifact@v5
         with:
@@ -174,17 +231,12 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Generate checksums and release notes
+      - name: Generate release notes
         shell: bash
         run: |
           set -euo pipefail
-          (
-            cd release-assets
-            LC_ALL=C sha256sum -- mewtype-* > "checksums-${VERSION}.txt"
-          )
-
           {
-            printf 'Source commit: https://github.com/It-s-bilibili-ticket-golang/bilibili-ticket-mewtype/commit/%s\n' "$REVISION"
+            printf 'Source commit: %s\n' "$REVISION"
             if [[ -n "$RELEASE_EPOCH" ]]; then
               printf '\nExpires at %s UTC.\n' \
                 "$(date -u -d "@$((RELEASE_EPOCH + 604800))" '+%Y-%m-%d %H:%M:%S')"
@@ -198,13 +250,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
           flags=()
           if [[ "$VERSION" == nightly+* ]]; then
             flags+=(--prerelease)
           fi
 
-          gh release create "$VERSION" release-assets/* \
+          gh release create "$VERSION" release-assets/*.tar.gz \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Mewtype $VERSION" \
@@ -219,21 +270,20 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -euo pipefail
-
           : "${TELEGRAM_BOT_TOKEN:?Missing TELEGRAM_BOT_TOKEN}"
           : "${TELEGRAM_CHAT_ID:?Missing TELEGRAM_CHAT_ID}"
 
           api="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
           message="$(printf 'Mewtype %s\n\n' "$VERSION"; cat release-notes.md)"
 
-          curl --fail --silent --show-error --output /dev/null \
+          curl --fail --silent --show-error \
             --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
             --data-urlencode "text=$message" \
-            "$api/sendMessage"
+            "$api/sendMessage" | jq -e '.ok == true' >/dev/null
 
-          for asset in release-assets/*; do
-            curl --fail --silent --show-error --output /dev/null \
+          for asset in release-assets/*.tar.gz; do
+            curl --fail --silent --show-error \
               --form-string "chat_id=$TELEGRAM_CHAT_ID" \
               --form "document=@$asset" \
-              "$api/sendDocument"
+              "$api/sendDocument" | jq -e '.ok == true' >/dev/null
           done
