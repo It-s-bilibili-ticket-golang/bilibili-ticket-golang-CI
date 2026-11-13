@@ -115,7 +115,7 @@ jobs:
       RUSTUP_TOOLCHAIN: "1.98.1"
       CARGO_TERM_COLOR: always
       PYTHONDONTWRITEBYTECODE: "1"
-
+      BILIBILI_RELEASE_VERSION: ${{ needs.resolve.outputs.version }}
     steps:
       - name: Check out Mewtype
         uses: actions/checkout@v5
