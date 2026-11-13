@@ -208,7 +208,15 @@ jobs:
             llvm_libdir="$("$llvm_config" --libdir)"
           fi
           test -f "$llvm_libdir/libPolly.a"
-
+          
+      - name: Cache Cargo dependencies and Lyra build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            lyra -> target
+          key: lyra-llvm22-${{ matrix.target }}
+          cache-bin: "false"
+          
       - name: Build Lyra
         working-directory: lyra
         run: |
