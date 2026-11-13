@@ -264,6 +264,27 @@ jobs:
             echo "LYRA_LLVM_BIN=$wrapper_bin"
           } >> "$GITHUB_ENV"
           
+      - name: Install NASM on Windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Get-Command nasm.exe -ErrorAction SilentlyContinue)) {
+            choco install nasm -y --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          $nasm = Get-Command nasm.exe -ErrorAction SilentlyContinue
+          if ($nasm) {
+            $nasmDir = Split-Path -Parent $nasm.Source
+          } else {
+            $nasmDir = Join-Path $env:ProgramFiles 'NASM'
+          }
+
+          & (Join-Path $nasmDir 'nasm.exe') -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $nasmDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
       - name: Build and archive obfuscated binaries
         working-directory: source
         env:
