@@ -1,0 +1,124 @@
+name: Build Mewtype
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        type: string
+        required: true
+        default: main
+      expires_in_one_week:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      revision: ${{ steps.source.outputs.revision }}
+      release_epoch: ${{ steps.source.outputs.release_epoch }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: It-s-bilibili-ticket-golang/bilibili-ticket-mewtype
+          ref: ${{ inputs.source_ref }}
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          persist-credentials: false
+
+      - id: source
+        name: 固定源码提交和统一发版时间
+        shell: bash
+        env:
+          EXPIRES_IN_ONE_WEEK: ${{ inputs.expires_in_one_week }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+          if [[ "$EXPIRES_IN_ONE_WEEK" == "true" ]]; then
+            started_at="$(gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
+              --jq '.run_started_at')"
+            [[ -n "$started_at" && "$started_at" != "null" ]]
+            echo "release_epoch=$(date -u -d "$started_at" +%s)" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, platform: linux-amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: windows-latest, platform: windows-amd64 }
+          - { runner: macos-15-intel, platform: macos-amd64 }
+          - { runner: macos-15, platform: macos-arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          repository: It-s-bilibili-ticket-golang/bilibili-ticket-mewtype
+          ref: ${{ needs.resolve.outputs.revision }}
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: 安装 Rust
+        shell: bash
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup override set 1.98.1
+
+      - name: 验证并打包
+        shell: bash
+        env:
+          EXPIRES_IN_ONE_WEEK: ${{ inputs.expires_in_one_week }}
+          RELEASE_EPOCH: ${{ needs.resolve.outputs.release_epoch }}
+          PYTHONDONTWRITEBYTECODE: '1'
+          PLATFORM: ${{ matrix.platform }}
+          REVISION: ${{ needs.resolve.outputs.revision }}
+        run: |
+          set -euo pipefail
+          unset BILIBILI_RELEASE_EPOCH
+
+          if [[ "$EXPIRES_IN_ONE_WEEK" == "true" ]]; then
+            [[ "$RELEASE_EPOCH" =~ ^[0-9]+$ ]]
+            export BILIBILI_RELEASE_EPOCH="$RELEASE_EPOCH"
+          fi
+
+          name="mewtype-${PLATFORM}-${REVISION:0:12}"
+          python tooling/package-release.py "dist/$name" --edition public
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+
+          python - "dist/$name.tar.gz" <<'PY'
+          import hashlib
+          import sys
+          from pathlib import Path
+
+          archive = Path(sys.argv[1])
+          with archive.open("rb") as file:
+              digest = hashlib.file_digest(file, "sha256").hexdigest()
+          archive.with_suffix(".gz.sha256").write_bytes(
+              f"{digest}  {archive.name}\n".encode("ascii")
+          )
+          PY
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mewtype-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+          if-no-files-found: error
